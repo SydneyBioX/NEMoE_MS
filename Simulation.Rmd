@@ -1,0 +1,330 @@
+---
+title: "Simulation"
+author: "xxn"
+date: "2021/9/16"
+output: html_document
+---
+
+```{r}
+suppressMessages(suppressWarnings({
+                  library(NEMoE)
+                  library(glmnet)
+                  library(tidyverse)
+                  library(ROCit)
+                  library(ROCR)
+                  library(ggpubr)
+                  library(pheatmap)
+                  library(e1071)
+                  library(randomForest)
+                  library(ggcorrplot)
+                  library(viridis)
+                  source("./utils.R")}))
+```
+
+## Illustration
+
+```{r}
+gen_show <- purrr::partial(genNEMoE, n = 200, p = 50, q = 30, K0 = 2, c_g = 2, c_e = 2, gen_Micro = "dm",a = 1)
+```
+
+```{r}
+D1 <- gen_show(eta = 0)
+```
+
+```{r}
+W0 <- prcomp(D1$W)
+W0_df <- as.data.frame(W0$x[,c(1,2)])
+W0_df$latent <- as.factor(cvtLabel(D1$latent,idx = T))
+W0_df$y <- as.factor(D1$y)
+ggplot(W0_df) + geom_point(aes(x = PC1, y = PC2, color = latent, shape = y))
+```
+
+```{r}
+D2 <- gen_show(eta = 1)
+```
+
+```{r}
+W0 <- prcomp(D2$W)
+W0_df <- as.data.frame(W0$x[,c(1,2)])
+W0_df$latent <- as.factor(cvtLabel(D2$latent,idx = T))
+W0_df$y <- as.factor(D2$y)
+ggplot(W0_df) + geom_point(aes(x = PC1, y = PC2, color = latent, shape = y))
+```
+
+## Evaluation
+
+```{r}
+B = 100
+lambda1 = 0.01
+lambda2 = 0.013
+```
+
+
+```{r}
+evaluation_n <- purrr::partial(evaluation, lambda1 = lambda1, lambda2 = lambda2, K = 2,
+                               eta = 0.1, B = B, p = 50, q = 30, rho = 0, c_g = 2, c_e = 2)
+
+acc_n <- list()
+n_list <- c(100, 200, 300, 500)
+for(i in 1:4){
+  acc_n[[i]] <- suppressWarnings(evaluation_n(n = n_list[i]))
+}
+save.image()
+```
+
+```{r}
+evaluation_eta <- purrr::partial(evaluation, lambda1 = lambda1, lambda2 = lambda2, K = 2,
+                               p = 50, B = B, n = 200, q = 30, rho = 0, c_g = 2, c_e = 2)
+
+acc_eta <- list()
+eta_list <- c(0, 0.1, 0.3, 0.5)
+for(i in 1:4){
+  acc_eta[[i]] <- suppressWarnings(evaluation_eta(eta = eta_list[i]))
+}
+save.image()
+```
+
+
+```{r}
+evaluation_p <- purrr::partial(evaluation, lambda1 = lambda1, lambda2 = lambda2, K = 2,
+                               eta = 0.1, B = B, n = 200, q = 30, rho = 0, c_g = 2, c_e = 2)
+
+acc_p <- list()
+p_list <- c(30, 50, 80, 100)
+for(i in 1:4){
+  acc_p[[i]] <- suppressWarnings(evaluation_p(p = p_list[i]))
+}
+save.image()
+```
+
+```{r}
+evaluation_q <- purrr::partial(evaluation, lambda1 = lambda1, lambda2 = lambda2,
+                               p = 50, B = B, n = 200, eta = 0, rho = 0, c_g = 2, c_e = 2)
+
+acc_q <- list()
+q_list <- c(30, 50, 80, 100)
+for(i in 1:4){
+  acc_q[[i]] <- suppressWarnings(evaluation_q(q = q_list[i]))
+}
+save.image()
+```
+
+
+```{r}
+evaluation_ce <- purrr::partial(evaluation, lambda1 = lambda1, lambda2 = lambda2,
+                               p = 50, q = 30, B = B, n = 200, eta = 0.1, rho = 0, c_g = 2)
+
+acc_ce <- list()
+ce_list <- c(1, 2, 3, 5)
+for(i in 1:4){
+  acc_ce[[i]] <- suppressWarnings(evaluation_ce(c_e = ce_list[i]))
+}
+save.image()
+```
+
+```{r}
+evaluation_cg <- purrr::partial(evaluation, lambda1 = lambda1, lambda2 = lambda2,
+                               p = 50, q = 30, B = B, n = 200, eta = 0.1, rho = 0, c_e = 2)
+
+acc_cg <- list()
+cg_list <- c(1, 2, 3, 5)
+for(i in 1:4){
+  acc_cg[[i]] <- suppressWarnings(evaluation_cg(c_g = cg_list[i]))
+}
+save.image()
+```
+
+```{r}
+evaluation_rho <- purrr::partial(evaluation, lambda1 = lambda1, lambda2 = lambda2,
+                               p = 50, q = 30, B = B, n = 200, eta = 0.1, c_g = 2, c_e = 2)
+
+acc_rho <- list()
+rho_list <- c(0, 0.1, 0.3, 0.5)
+for(i in 1:4){
+  acc_rho[[i]] <- suppressWarnings(evaluation_rho(rho = rho_list[i]))
+}
+save.image()
+```
+
+
+```{r}
+plt_eta <- plt_function(acc_eta, data.frame(n = rep(200, 4), p = rep(50, 4), q= rep(30, 4), c_e = rep(1,4), c_g = rep(2,4),
+                                         rho = rep(0,4), model = c("none", "weakly", "mild", "strong")))
+
+plt_n <- plt_function(acc_n, data.frame(n = c(200,300,500,1000), p = rep(50, 4), q= rep(30, 4), c_e = rep(1,4), c_g = rep(2,4),
+                                         rho = rep(0,4), model = rep("none",4)))
+
+plt_p <- plt_function(acc_p, data.frame(n = rep(200,4), p = c(30, 50, 80, 100), q= rep(30, 4), c_e = rep(1,4), c_g = rep(2,4),
+                                         rho = rep(0,4), model = rep("none",4)))
+
+plt_q <- plt_function(acc_q, data.frame(n = rep(200,4), p = rep(50, 4), q= c(30, 50, 80, 100), c_e = rep(1,4), c_g = rep(2,4),
+                                         rho = rep(0,4), model = rep("none",4)))
+
+plt_ce <- plt_function(acc_ce, data.frame(n = rep(200,4), p = rep(50, 4), q= rep(30, 4), c_e = c(0.5, 1, 2, 5), c_g = rep(2,4),
+                                         rho = rep(0,4), model = rep("none",4)))
+
+plt_cg <- plt_function(acc_cg, data.frame(n = rep(200,4), p = rep(50, 4), q= rep(30, 4), c_e = rep(1,4), c_g = c(0.5, 1, 2, 5),
+                                         rho = rep(0,4), model = rep("none",4)))
+
+plt_rho <- plt_function(acc_rho, data.frame(n = rep(200,4), p = rep(50, 4), q= rep(30, 4), c_e = rep(1,4), c_g = c(0.5, 1, 2, 5),
+                                         rho = c(0,0.1,0.3,0.5), model = rep("none",4)))
+```
+
+```{r}
+X_model <- suppressWarnings(plt_eta %>% group_by(model, method) %>% summarise(med = mean(acc), sd = sd(acc)))
+colnames(X_model)[1] = "param"
+X_model$eval = "model"
+
+X_n <- suppressWarnings(plt_n %>% group_by(n, method) %>% summarise(med = mean(acc), sd = sd(acc)))
+colnames(X_n)[1] = "param"
+X_n$eval = "n"
+X_n$param <- as.character(X_n$param)
+
+X_p <- suppressWarnings(plt_p %>% group_by(p, method) %>% summarise(med = mean(acc), sd = sd(acc)))
+colnames(X_p)[1] = "param"
+X_p$eval = "p"
+X_p$param <- as.character(X_p$param)
+
+X_q <- suppressWarnings(plt_q %>% group_by(q, method) %>% summarise(med = mean(acc), sd = sd(acc)))
+colnames(X_q)[1] = "param"
+X_q$eval = "q"
+X_q$param <- as.character(X_q$param)
+
+X_ce <- suppressWarnings(plt_ce %>% group_by(c_e, method) %>% summarise(med = mean(acc), sd = sd(acc)))
+colnames(X_ce)[1] = "param"
+X_ce$eval = "ce"
+X_ce$param <- as.character(X_ce$param)
+
+X_cg <- suppressWarnings(plt_cg %>% group_by(c_g, method) %>% summarise(med = mean(acc), sd = sd(acc)))
+colnames(X_cg)[1] = "param"
+X_cg$eval = "cg"
+X_cg$param <- as.character(X_cg$param)
+
+X_rho <- suppressWarnings(plt_rho %>% group_by(rho, method) %>% summarise(med = mean(acc), sd = sd(acc)))
+colnames(X_rho)[1] = "param"
+X_rho$eval = "rho"
+X_rho$param <- as.character(X_rho$param)
+```
+
+
+```{r}
+X_heat <- rbind(X_model, X_n, X_p, X_q, X_ce, X_cg, X_rho)
+X_heat$id <- paste(X_heat$eval, X_heat$param, sep = ".")
+X_heat$method <- as.character(X_heat$method)
+#X_heat$method[X_heat$method == "glmnet"] = "Lasso"
+#X_heat$method[X_heat$method == "glmnet II"] = "Lasso II"
+X_heat$method = factor(X_heat$method, levels = c("NEMoE", "sLR", "sLR II", "SVM", "SVM II", "RF", "RF II"))
+
+X_heat$id = factor(X_heat$id, levels = c("model.none", "model.weakly", "model.mild", "model.strong", "n.200","n.300","n.500","n.1000","p.30","p.50","p.80","p.100","q.30","q.50","q.80","q.100","ce.0.5","ce.1","ce.2","ce.5","cg.0.5","cg.1","cg.2","cg.5", "rho.0", "rho.0.1","rho.0.3","rho.0.5"))
+colnames(X_heat)[3] = "accuracy"
+```
+
+```{r}
+X_heat1 <- X_heat[,c("accuracy", "id","method")]
+X_heat2 <- X_heat1 %>% spread("method", "accuracy")
+
+X_heat3 <- X_heat2[,-1]
+
+rownames(X_heat3) <- X_heat2$id
+```
+
+```{r}
+p_list <- list()
+for(i in 1:7)
+{
+  idx <- c((4*i -3):(4*i))
+  X_heat31 <- X_heat3[idx,]
+  X_heat31[X_heat31 > 0.85] = 0.85
+  X_heat31[X_heat31 < 0.55] = 0.55
+  rownames(X_heat31) <- rownames(X_heat3)[idx]
+  p_list[[i]] <- ggcorrplot(t(X_heat31)) + scale_fill_gradientn(colours = viridis(50), limits = c(0.55,0.85)) 
+}
+print(p_list)
+#save.image()
+```
+
+```{r}
+evaluation_Kn <- purrr::partial(evaluation_K, K = 3, p = 50, q = 30, B = B, rho = 0,
+                                eta = 0.1, c_g = 2, c_e = 2, verbose = F)
+
+acc_Kn <- list()
+Kn_list <- c(100, 200, 500, 1000)
+for(i in 1:4){
+  acc_Kn[[i]] <- suppressWarnings(evaluation_Kn(n = Kn_list[i]))
+}
+save.image()
+```
+
+```{r}
+evaluation_Keta <- purrr::partial(evaluation_K, K = 3, p = 50, q = 30, B = B, rho = 0,
+                                n = 300, c_g = 2, c_e = 2, verbose = F)
+
+acc_Keta <- list()
+Keta_list <- c(0, 0.1, 0.3, 0.5)
+for(i in 1){
+  acc_Keta[[i]] <- suppressWarnings(evaluation_Keta(eta = Keta_list[i]))
+}
+save.image()
+```
+
+```{r}
+plt_Kn <- plt_function(acc_Kn, data.frame(n = c(100,200,500,1000), p = rep(50, 4), q= rep(30, 4), c_e = rep(1,4), c_g = rep(2,4), rho = rep(0,4), model = rep("none",4)), method_list = colnames(acc_Kn[[1]]))
+
+plt_Keta <- plt_function(acc_Keta, data.frame(n = rep(300,4), p = rep(50, 4), q= rep(30, 4), c_e = rep(1,4), c_g = c(0.5, 1, 2, 5), rho = rep(0,4), model = c("none", "weakly", "mild", "strong")), method_list = colnames(acc_Kn[[1]]))
+```
+
+
+```{r}
+X_Kn <- suppressWarnings(plt_Kn %>% group_by(n, method) %>% summarise(med = mean(acc), sd = sd(acc)))
+colnames(X_Kn)[1] = "param"
+X_Kn$eval = "n"
+X_Kn$param <- as.character(X_Kn$param)
+
+X_Keta <- suppressWarnings(plt_Keta %>% group_by(model, method) %>% summarise(med = mean(acc), sd = sd(acc)))
+colnames(X_Keta)[1] = "param"
+X_Keta$eval = "model"
+X_Keta$param <- as.character(X_Keta$param)
+```
+
+```{r}
+X_heat <- rbind(X_Kn, X_Keta)
+X_heat$id <- paste(X_heat$eval, X_heat$param, sep = ".")
+X_heat$method <- as.character(X_heat$method)
+#X_heat$method[X_heat$method == "glmnet"] = "Lasso"
+#X_heat$method[X_heat$method == "glmnet II"] = "Lasso II"
+X_heat$method = factor(X_heat$method, levels = c("sLR", "NEMoE II", "sLR II", "NEMoE III", "sLR III ", "NEMoE IV",  "sLR IV"))
+
+X_heat$id = factor(X_heat$id, levels = c("model.none", "model.weakly", "model.mild", "model.strong", "n.100","n.200","n.500","n.1000"))
+colnames(X_heat)[3] = "accuracy"
+```
+
+```{r}
+X_heat1 <- X_heat[,c("accuracy", "id","method")]
+X_heat2 <- X_heat1 %>% spread("method", "accuracy")
+
+X_heat3 <- X_heat2[,-1]
+
+rownames(X_heat3) <- X_heat2$id
+```
+
+```{r}
+p_list <- list()
+for(i in 1:2)
+{
+  idx <- c((4*i -3):(4*i))
+  X_heat31 <- X_heat3[idx,]
+  X_heat31[X_heat31 > 0.85] = 0.85
+  X_heat31[X_heat31 < 0.55] = 0.55
+  rownames(X_heat31) <- rownames(X_heat3)[idx]
+  p_list[[i]] <- ggcorrplot(t(X_heat31)) + scale_fill_gradientn(colours = viridis(50), limits = c(0.55,0.85)) 
+}
+print(p_list)
+#save.image()
+```
+
+```{r}
+
+```
+
+
+
