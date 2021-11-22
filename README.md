@@ -1,2 +1,2 @@
 # NEMoE_MS
-Figures in Manscript of NEMoE
+Generate result in NEMoE paper
