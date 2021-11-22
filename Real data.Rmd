@@ -1,0 +1,139 @@
+---
+title: "RealData"
+author: "xxn"
+date: "2021/10/19"
+output:
+  html_document:
+    chunk_output_type: console
+    code_folding: hide
+    editor_options: null
+    fig_height: 8
+    fig_width: 8
+    font_size: 24
+    number_sections: yes
+    toc: yes
+    toc_depth: 3
+    toc_float: yes
+    indent: True
+  pdf_document:
+    toc: yes
+    toc_depth: '3'
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+tax_color <- c("#FB8072", "#BEBADA","#8DD3C7","#4C3970","#FDB462","#F1AE4F","#FCCDE5","#E5C494", "#FC8D62")
+```
+
+```{r}
+suppressWarnings({
+  library(ROCit)
+  library(ROCR)
+  library(ggplot2)
+  library(pheatmap)
+  library(NEMoE)
+  library(tidyverse)
+  library(ggtree)
+  library(phyloseq)
+  library(glmnet)
+  library(e1071)
+  library(psych)
+  library(purrr)
+  library(mclust)
+  library(randomForest)
+  library(ALDEx2)
+  library(forestplot)
+})
+
+```
+
+# Preprocessing
+
+```{r}
+suppressMessages(source("./Preprocessing.R"))
+```
+
+
+```{r}
+idx_exc <- which( (Z_nutri1$Tot_Energy_without_Dietary_Fibre_kJ_per_day > 20000))
+```
+
+
+```{r}
+Z_nutri1 <- na.omit(Z_nutri)
+ps1 <- subset_samples(ps0, sample_names(ps0) %in% rownames(Z_nutri1))
+
+idx_exc <- which( (Z_nutri1$Tot_Energy_without_Dietary_Fibre_kJ_per_day > 20000))
+
+Z_nutri2 <- Z_nutri1[-idx_exc, ]
+ps2 <- subset_samples(ps0, sample_names(ps0) %in% rownames(Z_nutri2))
+
+```
+
+
+```{r}
+y <- ps2@sam_data$PD
+y <- as.numeric(as.factor(y)) - 1
+names(y) <- sample_names(ps2)
+#asv0 <- as.data.frame(ps0@otu_table)
+
+gen_name <- ps2@tax_table[,6]
+name_ASV <- paste( gen_name,
+                       paste("ASV.", 1:length(gen_name), sep = ""),
+                       sep = ":")
+
+X_list0 <- psGather(ps2)
+
+X_list <- list()
+
+q70 <- partial(quantile, probs = 0.7)
+
+X_list[[1]] <- filter_comp(X_list0[[1]], thresh_func = q70, thresh =1e-4)
+X_list[[1]] <- filter_comp(X_list[[1]], thresh_func = var, thresh = 5e-5)
+  
+X_list[[2]] <- filter_comp(X_list0[[2]], thresh_func = q70, thresh = 1e-4)
+X_list[[2]] <- filter_comp(X_list[[2]], thresh_func = var, thresh = 5e-5)
+  
+X_list[[3]] <- filter_comp(X_list0[[3]], thresh_func = q70, thresh = 1e-4)
+X_list[[3]] <- filter_comp(X_list[[3]], thresh_func = var, thresh = 5e-5)
+  
+X_list[[4]] <- filter_comp(X_list0[[4]], thresh_func = q70, thresh = 1e-4)
+X_list[[4]] <- filter_comp(X_list[[4]], thresh_func = var, thresh = 5e-5)
+
+X_list[[5]] <- filter_comp(X_list0[[5]], thresh_func = q70, thresh = 1e-4)
+X_list[[5]] <- filter_comp(X_list[[5]], thresh_func = var, thresh = 1e-5)
+#X_list <- X_list0
+names(X_list) <- names(X_list0)[1:5]
+
+trans_comp1 <- purrr::partial(trans_comp, method = "asin", scale = T)
+
+X_list <- lapply(X_list, scale)
+
+tab <- as.data.frame(ps0@tax_table)
+```
+
+```{r}
+Z <- scale(Z_nutri2[,-c(2,9)])
+Z1 <- scale(Z[,24:27])
+```
+
+```{r}
+NEMoE <- NEMoE_buildFromList(Microbiome = X_list, Nutrition = Z, Response = y,
+                            lambda1 = c(0.005, 0.012, 0.013, 0.023, 0.025),
+                            lambda2 = 0.02, alpha1 = 0.5, alpha2 = 0.5,
+                            cvParams = createCVList(g1 = 10, shrink = 0.4,
+                                                    track = F), itmax = 1e3)
+```
+
+```{r}
+NEMoE <- fitNEMoE(NEMoE)
+```
+
+```{r}
+pred <- evaluation_real(X = X_list, Z = Z, y = y)
+```
+
+

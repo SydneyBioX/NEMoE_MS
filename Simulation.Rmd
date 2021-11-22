@@ -2,7 +2,22 @@
 title: "Simulation"
 author: "xxn"
 date: "2021/9/16"
-output: html_document
+output:
+  html_document:
+    chunk_output_type: console
+    code_folding: hide
+    editor_options: null
+    fig_height: 8
+    fig_width: 8
+    font_size: 24
+    number_sections: yes
+    toc: yes
+    toc_depth: 3
+    toc_float: yes
+    indent: True
+  pdf_document:
+    toc: yes
+    toc_depth: '3'
 ---
 
 ```{r}
@@ -261,7 +276,7 @@ evaluation_Keta <- purrr::partial(evaluation_K, K = 3, p = 50, q = 30, B = B, rh
 
 acc_Keta <- list()
 Keta_list <- c(0, 0.1, 0.3, 0.5)
-for(i in 1){
+for(i in 1:4){
   acc_Keta[[i]] <- suppressWarnings(evaluation_Keta(eta = Keta_list[i]))
 }
 save.image()
@@ -323,7 +338,14 @@ print(p_list)
 ```
 
 ```{r}
+evaluate_L <- purrr::partial(evaluate_level, eta = 0.3)
+n_list <- c(100, 200, 500, 1000)
 
+acc_Ln <- list()
+for(i in 1:4){
+  acc_Ln[[i]] <- suppressWarnings(evaluate_L(n = n_list[i]))
+}
+#save.image()
 ```
 
 

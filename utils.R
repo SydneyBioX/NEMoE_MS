@@ -1,13 +1,11 @@
 library(glmnet)
 
-
-
 glmnet_cv <- function(X, y){
   X <- as.matrix(X)
 
-  temp <- cv.glmnet(x = X, y = y, family = "binomial")
+  temp <- suppressWarnings(cv.glmnet(x = X, y = y, family = "binomial"))
 
-  res <- glmnet(x = X, y = y, family = "binomial", lambda = temp$lambda.min)
+  res <- suppressWarnings(glmnet(x = X, y = y, family = "binomial", lambda = temp$lambda.min))
 
   return(res)
 }
@@ -21,7 +19,7 @@ predict_two_stage <- function(X_new, Z_new, y_new = NULL, twostage, method = "sv
 
   dist_all <- as.matrix(dist(rbind(center, Z_new)))
 
-  dist_sel <- as.matrix(dist_all[(K+1):nrow(dist_all), 1:K])
+  dist_sel <- as.matrix(dist_all[(K+1):nrow(dist_all), 1:K, drop = F])
 
   r_i <- apply(dist_sel, 1, which.min)
 
@@ -50,7 +48,7 @@ predict_two_stage <- function(X_new, Z_new, y_new = NULL, twostage, method = "sv
   }else{
     for(i in 1:K){
 
-      X_k <- X_new[r_i == i,]
+      X_k <- X_new[r_i == i,,drop = F]
       if(is.vector(X_k)){
         X_k <- matrix(X_k, nrow = 1)
       }
@@ -229,7 +227,7 @@ evaluation <- function(n = 200, p = 50, q = 30, c_e = 2, c_g = 2,
   return(acc)
 }
 
-evaluation_K <- function(n = 400, p = 50, q = 30, c_e = 1, c_g = 2,
+evaluation_K <- function(n = 400, p = 50, q = 30, c_e = 2, c_g = 2,
                          eta = 0, rho = 0, K = 3,  version = "probit",
                          B= 100, num_restart = 0, verbose = F, init = "kmeans"){
 
@@ -261,15 +259,11 @@ evaluation_K <- function(n = 400, p = 50, q = 30, c_e = 1, c_g = 2,
     X1_test_in <- cbind(X_test_in, Z_test_in)
     y_test <- data_2$y[(n+1):(2*n)]
 
-    print("Start glmnet")
     res_glmnet1 <- try(glmnet_cv(X = X_train_in, y = y_train))
-    print("Start glmnet2")
     res_glmnet2 <- try(two_stage(X = X_train_in, Z = Z_train_in, y = y_train, K = 2, method = "glmnet"))
-    print("Start glmnet3")
     res_glmnet3 <- try(two_stage(X = X_train_in, Z = Z_train_in, y = y_train, K = 3, method = "glmnet"))
-    print("Start glmnet4")
     res_glmnet4 <- try(two_stage(X = X_train_in, Z = Z_train_in, y = y_train, K = 4, method = "glmnet"))
-    print("Start NEMoE2")
+
     NEMoE_simu_2 <- NEMoE_buildFromList(X_train_in, Z_train_in, y_train, K = 2, lambda1 = 0.01,
                                       lambda2 = 0.01, adapt =T, btr = T,
                                       alpha1 = 1, alpha2 = 1 ,
@@ -351,6 +345,98 @@ evaluation_K <- function(n = 400, p = 50, q = 30, c_e = 1, c_g = 2,
   return(acc)
 }
 
+evaluate_level <- function(n = 500, p_L = c(20,50,80,100), eta = 0,
+                           rho = 0, K = 2, K0 = 2,  version = "probit",
+                           B= 100, num_restart = 0, lambda1 = 0.01,
+                           lambda2 = 0.015, verbose = F, init = "glmnet"){
+
+  ari <- matrix(0, nrow = B, ncol = 5)
+  Sigma <- (1 - rho)*diag(rep(1,q)) + rho*matrix(1,nrow = q, ncol = q)
+
+  for(b in 1:B){
+
+    data_2 <- genNEMoE(n = 2*n, p = p, q = q, c_e = c_e, c_g = c_g,
+                       eta = eta, Sigma = Sigma, K = K, gen_Micro = "mgauss",
+                       p_L = c(20,40,80), link = version, prev_filt = 0)
+    data_2$X_list <- lapply(data_2$X_list, scale)
+    data_2$W <- scale(data_2$W)
+
+    X1_train <- data_2$X_list[[1]][1:n,]
+    X2_train <- data_2$X_list[[2]][1:n,]
+    X3_train <- data_2$X_list[[3]][1:n,]
+    X4_train <- data_2$X_list[[4]][1:n,]
+    X_list_train <- list(X1_train, X2_train, X3_train, X4_train)
+    Z_train <- data_2$W[1:n,]
+    y_train <- data_2$y[1:n]
+
+    X1_test <- data_2$X_list[[1]][(n+1):(2*n),]
+    X2_test <- data_2$X_list[[2]][(n+1):(2*n),]
+    X3_test <- data_2$X_list[[3]][(n+1):(2*n),]
+    X4_test <- data_2$X_list[[4]][(n+1):(2*n),]
+    X_list_test <- list(X1_test, X2_test, X3_test, X4_test)
+    Z_test <- data_2$W[(n+1):(2*n),]
+    y_test <- data_2$y[(n+1):(2*n)]
+    logit_test <- 1/(1 + exp(-Z_test %*% data_2$gamma))
+    latent_test <- cvtLabel(logit_test, idx = T)
+
+    NEMoE1 <- NEMoE_buildFromList(X1_train, Z_train, y_train, K = 2, lambda1 = 0.01,
+                                   lambda2 = 0.01, adapt =T, btr = T,
+                                   alpha1 = 0.5, alpha2 = 0.5 ,
+                                   verbose= verbose, init = init)
+
+    NEMoE1 <- fitNEMoE(NEMoE1, num_restart = 0)
+
+    pred_logit1 <- 1/(1 + exp(-(cbind(rep(1,n),Z_test) %*% NEMoE1@NEMoE_output$gamma)))
+    pred_label1 <- cvtLabel(pred_logit1, idx = T)
+    ari1 = mclust::adjustedRandIndex(pred_label1, latent_test)
+
+    NEMoE2 <- NEMoE_buildFromList(X2_train, Z_train, y_train, K = 2, lambda1 = 0.01,
+                                  lambda2 = 0.01, adapt =T, btr = T,
+                                  alpha1 = 0.5, alpha2 = 0.5 ,
+                                  verbose= verbose, init = init)
+
+    NEMoE2 <- fitNEMoE(NEMoE2, num_restart = 0)
+    pred_logit2 <- 1/(1 + exp(-(cbind(rep(1,n),Z_test) %*% NEMoE2@NEMoE_output$gamma)))
+    pred_label2 <- cvtLabel(pred_logit2, idx = T)
+    ari2 = mclust::adjustedRandIndex(pred_label2, latent_test)
+
+    NEMoE3 <- NEMoE_buildFromList(X3_train, Z_train, y_train, K = 2, lambda1 = 0.01,
+                                  lambda2 = 0.01, adapt =T, btr = T,
+                                  alpha1 = 0.5, alpha2 = 0.5 ,
+                                  verbose= verbose, init = init)
+
+    NEMoE3 <- fitNEMoE(NEMoE3, num_restart = 0)
+    pred_logit3 <- 1/(1 + exp(-(cbind(rep(1,n),Z_test) %*% NEMoE3@NEMoE_output$gamma)))
+    pred_label3 <- cvtLabel(pred_logit3, idx = T)
+    ari3 = mclust::adjustedRandIndex(pred_label3, latent_test)
+
+    NEMoE4 <- NEMoE_buildFromList(X4_train, Z_train, y_train, K = 2, lambda1 = 0.01,
+                                  lambda2 = 0.01, adapt =T, btr = T,
+                                  alpha1 = 0.5, alpha2 = 0.5 ,
+                                  verbose= verbose, init = init)
+
+    NEMoE4 <- fitNEMoE(NEMoE4, num_restart = 0)
+    pred_logit4 <- 1/(1 + exp(-(cbind(rep(1,n),Z_test) %*% NEMoE4@NEMoE_output$gamma)))
+    pred_label4 <- cvtLabel(pred_logit4, idx = T)
+    ari4 = mclust::adjustedRandIndex(pred_label4, latent_test)
+
+    NEMoE <- NEMoE_buildFromList(X_list_train, Z_train, y_train, K = 2, lambda1 = 0.01,
+                                lambda2 = 0.01, adapt =T, btr = T,
+                                alpha1 = 0.5, alpha2 = 0.5 ,
+                                verbose= verbose, init = init)
+
+    NEMoE <- fitNEMoE(NEMoE, num_restart = 0)
+    pred_logit5 <- 1/(1 + exp(-(cbind(rep(1,n),Z_test) %*% NEMoE@NEMoE_output$gamma)))
+    pred_label5 <- cvtLabel(pred_logit5, idx = T)
+    ari5 = mclust::adjustedRandIndex(pred_label5, latent_test)
+
+    ari[b,] <- c(ari1, ari2, ari3, ari4, ari5)
+    print(paste0("b=", b,":", paste(ari[b,], collapse = ",")))
+
+  }
+  return(ari)
+
+}
 
 plt_function <- function(tab_list, label_list, method_list = c("NEMoE", "sLR", "sLR II", "SVM", "SVM II", "RF", "RF II")){
 
@@ -435,4 +521,279 @@ class_check <- function(y, min_obs = 7){
 
 }
 
+filter_comp <- function(X, thresh_func = var, thresh = 1e-4){
+
+  X <- as.matrix(X)
+
+  X_stat <- apply(X, 2, thresh_func)
+
+  X <- X[, (X_stat > thresh)]
+
+  return(X)
+}
+
+trans_comp <- function(X, eps = 1e-4, method = "asin", scale = T){
+
+  X <- as.matrix(X)
+
+  if(method == "clr"){
+
+    X[X <= eps] <- eps
+
+    X_trans <- t(scale(log(t(X))))
+
+  }else if(method == "asin"){
+
+    X_trans <- asin(sqrt(X))
+  }
+
+  if(scale){
+    X_trans <- scale(X_trans)
+  }
+
+  return(X_trans)
+}
+
+evaluation_real <- function(X = Micro_scale, Z = Nutri_scale, y = Y_scale){
+
+  X1 <- X_list[[1]]
+  X2 <- X_list[[2]]
+  X3 <- X_list[[3]]
+  X4 <- X_list[[4]]
+  X5 <- X_list[[5]]
+
+  n <- nrow(X1)
+  p1 <- ncol(X1)
+  p2 <- ncol(X2)
+  p3 <- ncol(X3)
+  p4 <- ncol(X4)
+  p5 <- ncol(X5)
+  q <- ncol(Z)
+
+  X1 <- as.matrix(X1)
+  X2 <- as.matrix(X2)
+  X3 <- as.matrix(X3)
+  X4 <- as.matrix(X4)
+  X5 <- as.matrix(X5)
+  Z <- as.matrix(Z)
+
+  pred <- array(0, dim = c(n, 16, 5))
+
+  for(i in 1:n){
+
+    X1_train <- X1[-i, ]
+    X2_train <- X2[-i, ]
+    X3_train <- X3[-i, ]
+    X4_train <- X4[-i, ]
+    X5_train <- X5[-i, ]
+    X_train_list <- list(X1_train, X2_train, X3_train, X4_train, X5_train)
+
+    Z_train <- Z[-i, ]
+    y_train <- y[-i]
+
+    X1_test <- t(as.matrix(X1[i,]))
+    X2_test <- t(as.matrix(X2[i,]))
+    X3_test <- t(as.matrix(X3[i,]))
+    X4_test <- t(as.matrix(X4[i,]))
+    X5_test <- t(as.matrix(X5[i,]))
+    X_test_list <- list(X1_test, X2_test, X3_test, X4_test, X5_test)
+
+    Z_test <- t(as.matrix(Z[i,]))
+    y_test <- y[i]
+
+    X1_comb_train <- cbind(X1_train, Z_train)
+    X1_comb_test <- cbind(X1_test, Z_test)
+    X2_comb_train <- cbind(X2_train, Z_train)
+    X2_comb_test <- cbind(X2_test, Z_test)
+    X3_comb_train <- cbind(X3_train, Z_train)
+    X3_comb_test <- cbind(X3_test, Z_test)
+    X4_comb_train <- cbind(X4_train, Z_train)
+    X4_comb_test <- cbind(X4_test, Z_test)
+    X5_comb_train <- cbind(X5_train, Z_train)
+    X5_comb_test <- cbind(X5_test, Z_test)
+
+    NEMoE_phy_NM <- fitNEMoE(NEMoE_buildFromList(X1_train, Z_train, y_train, lambda1 = 0.005, lambda2 = 0.01, verbose = F, init = "glmnet"))
+    NEMoE_ord_NM <- fitNEMoE(NEMoE_buildFromList(X2_train, Z_train, y_train, lambda1 = 0.02, lambda2 = 0.01, verbose = F, init = "glmnet"))
+    NEMoE_fam_NM <- fitNEMoE(NEMoE_buildFromList(X3_train, Z_train, y_train, lambda1 = 0.03, lambda2 = 0.02, verbose = F, init = "glmnet"))
+    NEMoE_gen_NM <- fitNEMoE(NEMoE_buildFromList(X4_train, Z_train, y_train, lambda1 = 0.034, lambda2 = 0.02, verbose = F, init = "glmnet"))
+    NEMoE_asv_NM <- fitNEMoE(NEMoE_buildFromList(X5_train, Z_train, y_train, lambda1 = 0.04, lambda2 = 0.02, verbose = F, init = "glmnet"))
+
+
+    pred_MoE_NM1 <- NEMoE_predict(NEMoE_phy_NM, list(X1_test), Z_test, full = F)
+    pred_MoE_NM2 <- NEMoE_predict(NEMoE_ord_NM, list(X2_test), Z_test, full = F)
+    pred_MoE_NM3 <- NEMoE_predict(NEMoE_fam_NM, list(X3_test), Z_test, full = F)
+    pred_MoE_NM4 <- NEMoE_predict(NEMoE_gen_NM, list(X4_test), Z_test, full = F)
+    pred_MoE_NM5 <- NEMoE_predict(NEMoE_asv_NM, list(X5_test), Z_test, full = F)
+
+    pred[i,1,1:5] <- c(pred_MoE_NM1, pred_MoE_NM2, pred_MoE_NM3, pred_MoE_NM4, pred_MoE_NM5)
+
+    NEMoE_phy_MM <- fitNEMoE(NEMoE_buildFromList(X1_train, X1_train,  y_train, lambda1 = 0.01, lambda2 = 0.01, verbose = F, init = "glmnet"))
+    NEMoE_ord_MM <- fitNEMoE(NEMoE_buildFromList(X2_train, X2_train,  y_train, lambda1 = 0.02, lambda2 = 0.01, verbose = F, init = "glmnet"))
+    NEMoE_fam_MM <- fitNEMoE(NEMoE_buildFromList(X3_train, X3_train,  y_train, lambda1 = 0.03, lambda2 = 0.02, verbose = F, init = "glmnet"))
+    NEMoE_gen_MM <- fitNEMoE(NEMoE_buildFromList(X4_train, X4_train,  y_train, lambda1 = 0.034, lambda2 = 0.02, verbose = F, init = "glmnet"))
+    NEMoE_asv_MM <- fitNEMoE(NEMoE_buildFromList(X5_train, X5_train,  y_train, lambda1 = 0.04, lambda2 = 0.02, verbose = F, init = "glmnet"))
+
+    pred_MoE_MM1 <- NEMoE_predict(NEMoE_phy_MM, X_new = list(X1_test), Z_new = X1_test, full = F)
+    pred_MoE_MM2 <- NEMoE_predict(NEMoE_ord_MM, X_new = list(X2_test), Z_new = X2_test, full = F)
+    pred_MoE_MM3 <- NEMoE_predict(NEMoE_fam_MM, X_new = list(X3_test), Z_new = X3_test, full = F)
+    pred_MoE_MM4 <- NEMoE_predict(NEMoE_gen_MM, X_new = list(X4_test), Z_new = X4_test, full = F)
+    pred_MoE_MM5 <- NEMoE_predict(NEMoE_asv_MM, X_new = list(X5_test), Z_new = X5_test, full = F)
+
+    pred[i,2,1:5] <- c(pred_MoE_MM1, pred_MoE_MM2, pred_MoE_MM3, pred_MoE_MM4, pred_MoE_MM5)
+
+    NEMoE_NN <- fitNEMoE(NEMoE_buildFromList(Z_train, Z_train, Response = y_train, lambda1 = 0.024, lambda2 = 0.025, verbose = F))
+
+    pred_MoE_NN <- NEMoE_predict(NEMoE_NN, X_new = list(Z_test), Z_new = Z_test, full = F)
+    pred[i,3,1:5] <- c(pred_MoE_NN, pred_MoE_NN, pred_MoE_NN, pred_MoE_NN, pred_MoE_NN)
+
+    NEMoE_phy_MN <- fitNEMoE(NEMoE_buildFromList(Z_train, X1_train, y_train, lambda1 = 0.005, lambda2 = 0.01, verbose = F, init = "glmnet"))
+    NEMoE_ord_MN <- fitNEMoE(NEMoE_buildFromList(Z_train, X2_train, y_train, lambda1 = 0.02, lambda2 = 0.01, verbose = F, init = "glmnet"))
+    NEMoE_fam_MN <- fitNEMoE(NEMoE_buildFromList(Z_train, X3_train, y_train, lambda1 = 0.03, lambda2 = 0.02, verbose = F, init = "glmnet"))
+    NEMoE_gen_MN <- fitNEMoE(NEMoE_buildFromList(Z_train, X4_train, y_train, lambda1 = 0.034, lambda2 = 0.02, verbose = F, init = "glmnet"))
+    NEMoE_asv_MN <- fitNEMoE(NEMoE_buildFromList(Z_train, X5_train, y_train, lambda1 = 0.04, lambda2 = 0.02, verbose = F, init = "glmnet"))
+
+    pred_MoE_MN1 <- NEMoE_predict(NEMoE_phy_MN, list(Z_test), X1_test, full = F)
+    pred_MoE_MN2 <- NEMoE_predict(NEMoE_ord_MN, list(Z_test), X2_test, full = F)
+    pred_MoE_MN3 <- NEMoE_predict(NEMoE_fam_MN, list(Z_test), X3_test, full = F)
+    pred_MoE_MN4 <- NEMoE_predict(NEMoE_gen_MN, list(Z_test), X4_test, full = F)
+    pred_MoE_MN5 <- NEMoE_predict(NEMoE_asv_MN, list(Z_test), X5_test, full = F)
+    pred[i,4,1:5] <- c(pred_MoE_MN1, pred_MoE_MN2, pred_MoE_MN3, pred_MoE_MN4, pred_MoE_MN5)
+
+    NEMoE_phy_ext <- fitNEMoE(NEMoE_buildFromList(X1_comb_train, X1_comb_train, y_train, lambda1 = 0.005, lambda2 = 0.01, verbose = F, init = "glmnet"))
+    NEMoE_ord_ext <- fitNEMoE(NEMoE_buildFromList(X2_comb_train, X2_comb_train, y_train, lambda1 = 0.02, lambda2 = 0.01, verbose = F, init = "glmnet"))
+    NEMoE_fam_ext <- fitNEMoE(NEMoE_buildFromList(X3_comb_train, X3_comb_train, y_train, lambda1 = 0.03, lambda2 = 0.02, verbose = F, init = "glmnet"))
+    NEMoE_gen_ext <- fitNEMoE(NEMoE_buildFromList(X4_comb_train, X4_comb_train, y_train, lambda1 = 0.034, lambda2 = 0.02, verbose = F, init = "glmnet"))
+    NEMoE_asv_ext <- fitNEMoE(NEMoE_buildFromList(X5_comb_train, X5_comb_train, y_train, lambda1 = 0.04, lambda2 = 0.02, verbose = F, init = "glmnet"))
+
+    pred_MoE_ext1 <- NEMoE_predict(NEMoE_phy_ext, list(X1_comb_test), X1_comb_test, full = F)
+    pred_MoE_ext2 <- NEMoE_predict(NEMoE_ord_ext, list(X2_comb_test), X2_comb_test, full = F)
+    pred_MoE_ext3 <- NEMoE_predict(NEMoE_fam_ext, list(X3_comb_test), X3_comb_test, full = F)
+    pred_MoE_ext4 <- NEMoE_predict(NEMoE_gen_ext, list(X4_comb_test), X4_comb_test, full = F)
+    pred_MoE_ext5 <- NEMoE_predict(NEMoE_asv_ext, list(X5_comb_test), X5_comb_test, full = F)
+    pred[i,5,1:5] <- c(pred_MoE_ext1, pred_MoE_ext2, pred_MoE_ext3, pred_MoE_ext4, pred_MoE_ext5)
+
+
+    NEMoE_phy_NM_3 <- fitNEMoE(NEMoE_buildFromList(X1_train, Z_train, y_train, lambda1 = 0.008, lambda2 = 0.01, verbose = F, K = 3, alpha2 = 1, init = "glmnet"), restart_it = 0)
+    NEMoE_ord_NM_3 <- fitNEMoE(NEMoE_buildFromList(X2_train, Z_train, y_train, lambda1 = 0.02, lambda2 = 0.01, verbose = F, K = 3, alpha2 = 1, init = "glmnet"), restart_it = 0)
+    NEMoE_fam_NM_3 <- fitNEMoE(NEMoE_buildFromList(X3_train, Z_train, y_train, lambda1 = 0.03, lambda2 = 0.02, verbose = F, K = 3, alpha2 = 1, init = "glmnet"), restart_it = 0)
+    NEMoE_gen_NM_3 <- fitNEMoE(NEMoE_buildFromList(X4_train, Z_train, y_train, lambda1 = 0.034, lambda2 = 0.02, verbose = F, K = 3, alpha2 = 1, init = "glmnet"), restart_it = 0)
+    NEMoE_asv_NM_3 <- fitNEMoE(NEMoE_buildFromList(X5_train, Z_train, y_train, lambda1 = 0.04, lambda2 = 0.02, verbose = F, K = 3, alpha2 = 1, init = "glmnet"), restart_it = 0)
+
+    pred_MoE_NM3_1 <- NEMoE_predict(NEMoE_phy_NM_3, list(X1_test), Z_test, full = F)
+    pred_MoE_NM3_2 <- NEMoE_predict(NEMoE_ord_NM_3, list(X2_test), Z_test, full = F)
+    pred_MoE_NM3_3 <- NEMoE_predict(NEMoE_fam_NM_3, list(X3_test), Z_test, full = F)
+    pred_MoE_NM3_4 <- NEMoE_predict(NEMoE_gen_NM_3, list(X4_test), Z_test, full = F)
+    pred_MoE_NM3_5 <- NEMoE_predict(NEMoE_asv_NM_3, list(X5_test), Z_test, full = F)
+    pred[i,6,1:5] <- c(pred_MoE_NM3_1, pred_MoE_NM3_2, pred_MoE_NM3_3, pred_MoE_NM3_4, pred_MoE_NM3_5)
+
+    NEMoE_phy_NM_4 <- fitNEMoE(NEMoE_buildFromList(X1_train, Z_train, y_train, lambda1 = 0.01, lambda2 = 0.01, verbose = F, K = 4, alpha2 = 1, init = "glmnet"), restart_it = 0)
+    NEMoE_ord_NM_4 <- fitNEMoE(NEMoE_buildFromList(X2_train, Z_train, y_train, lambda1 = 0.02, lambda2 = 0.01, verbose = F, K = 4, alpha2 = 1, init = "glmnet"), restart_it = 0)
+    NEMoE_fam_NM_4 <- fitNEMoE(NEMoE_buildFromList(X3_train, Z_train, y_train, lambda1 = 0.03, lambda2 = 0.02, verbose = F, K = 4, alpha2 = 1, init = "glmnet"), restart_it = 0)
+    NEMoE_gen_NM_4 <- fitNEMoE(NEMoE_buildFromList(X4_train, Z_train, y_train, lambda1 = 0.034, lambda2 = 0.02, verbose = F, K = 4, alpha2 = 1, init = "glmnet"), restart_it = 0)
+    NEMoE_asv_NM_4 <- fitNEMoE(NEMoE_buildFromList(X5_train, Z_train, y_train, lambda1 = 0.04, lambda2 = 0.02, verbose = F, K = 4, alpha2 = 1, init = "glmnet"), restart_it = 0)
+
+    pred_MoE_NM4_1 <- NEMoE_predict(NEMoE_phy_NM_4, list(X1_test), Z_test, full = F)
+    pred_MoE_NM4_2 <- NEMoE_predict(NEMoE_ord_NM_4, list(X2_test), Z_test, full = F)
+    pred_MoE_NM4_3 <- NEMoE_predict(NEMoE_fam_NM_4, list(X3_test), Z_test, full = F)
+    pred_MoE_NM4_4 <- NEMoE_predict(NEMoE_gen_NM_4, list(X4_test), Z_test, full = F)
+    pred_MoE_NM4_5 <- NEMoE_predict(NEMoE_asv_NM_4, list(X5_test), Z_test, full = F)
+    pred[i,7,1:5] <- c(pred_MoE_NM4_1, pred_MoE_NM4_2, pred_MoE_NM4_3, pred_MoE_NM4_4, pred_MoE_NM4_5)
+
+    res_glmnet1 <- glmnet_cv(X = X1_train, y = y_train)
+    res_glmnet2 <- glmnet_cv(X = X2_train, y = y_train)
+    res_glmnet3 <- glmnet_cv(X = X3_train, y = y_train)
+    res_glmnet4 <- glmnet_cv(X = X4_train, y = y_train)
+    res_glmnet5 <- glmnet_cv(X = X5_train, y = y_train)
+
+    pred_glmnet1 <- as.matrix(predict(res_glmnet1, newx = X1_test, type = "response"))
+    pred_glmnet2 <- as.matrix(predict(res_glmnet2, newx = X2_test, type = "response"))
+    pred_glmnet3 <- as.matrix(predict(res_glmnet3, newx = X3_test, type = "response"))
+    pred_glmnet4 <- as.matrix(predict(res_glmnet4, newx = X4_test, type = "response"))
+    pred_glmnet5 <- as.matrix(predict(res_glmnet5, newx = X5_test, type = "response"))
+    pred[i,8,1:5] <- c(pred_glmnet1, pred_glmnet2, pred_glmnet3, pred_glmnet4, pred_glmnet5)
+
+    res_glmnet2_1 <- try(two_stage(X = X1_train, Z = Z_train, y = y_train, K = 2, method = "glmnet"))
+    res_glmnet2_2 <- try(two_stage(X = X2_train, Z = Z_train, y = y_train, K = 2, method = "glmnet"))
+    res_glmnet2_3 <- try(two_stage(X = X3_train, Z = Z_train, y = y_train, K = 2, method = "glmnet"))
+    res_glmnet2_4 <- try(two_stage(X = X4_train, Z = Z_train, y = y_train, K = 2, method = "glmnet"))
+    res_glmnet2_5 <- try(two_stage(X = X5_train, Z = Z_train, y = y_train, K = 2, method = "glmnet"))
+    pred_glmnet2_1 <- as.matrix(predict_two_stage(X_new = X1_test, Z_new = Z_test, y_new = y_test, twostage = res_glmnet2_1, method = "glmnet", output = "reponse"))
+    pred_glmnet2_2 <- as.matrix(predict_two_stage(X_new = X2_test, Z_new = Z_test, y_new = y_test, twostage = res_glmnet2_2, method = "glmnet", output = "reponse"))
+    pred_glmnet2_3 <- as.matrix(predict_two_stage(X_new = X3_test, Z_new = Z_test, y_new = y_test, twostage = res_glmnet2_3, method = "glmnet", output = "reponse"))
+    pred_glmnet2_4 <- as.matrix(predict_two_stage(X_new = X4_test, Z_new = Z_test, y_new = y_test, twostage = res_glmnet2_4, method = "glmnet", output = "reponse"))
+    pred_glmnet2_5 <- as.matrix(predict_two_stage(X_new = X5_test, Z_new = Z_test, y_new = y_test, twostage = res_glmnet2_5, method = "glmnet", output = "reponse"))
+    pred[i,9,1:5] <- c(pred_glmnet2_1, pred_glmnet2_2, pred_glmnet2_3, pred_glmnet2_4, pred_glmnet2_5)
+
+    res_svm1 <- svm(x = X1_train, y = as.factor(y_train), kernel = "radial", probability = T )
+    res_svm2 <- svm(x = X2_train, y = as.factor(y_train), kernel = "radial", probability = T )
+    res_svm3 <- svm(x = X3_train, y = as.factor(y_train), kernel = "radial", probability = T )
+    res_svm4 <- svm(x = X4_train, y = as.factor(y_train), kernel = "radial", probability = T )
+    res_svm5 <- svm(x = X5_train, y = as.factor(y_train), kernel = "radial", probability = T )
+
+    pred_svm1 <- as.matrix(attr(predict(res_svm1, X1_test, probability = T), "probabilities")[,"1"])
+    pred_svm2 <- as.matrix(attr(predict(res_svm2, X2_test, probability = T), "probabilities")[,"1"])
+    pred_svm3 <- as.matrix(attr(predict(res_svm3, X3_test, probability = T), "probabilities")[,"1"])
+    pred_svm4 <- as.matrix(attr(predict(res_svm4, X4_test, probability = T), "probabilities")[,"1"])
+    pred_svm5 <- as.matrix(attr(predict(res_svm5, X5_test, probability = T), "probabilities")[,"1"])
+    pred[i,10,1:5] <- c(pred_svm1, pred_svm2, pred_svm3, pred_svm4, pred_svm5)
+
+
+    res_svm2_1 <- try(two_stage(X = X1_train, Z = Z_train, y = y_train, K = 2, method = "svm"))
+    res_svm2_2 <- try(two_stage(X = X2_train, Z = Z_train, y = y_train, K = 2, method = "svm"))
+    res_svm2_3 <- try(two_stage(X = X3_train, Z = Z_train, y = y_train, K = 2, method = "svm"))
+    res_svm2_4 <- try(two_stage(X = X4_train, Z = Z_train, y = y_train, K = 2, method = "svm"))
+    res_svm2_5 <- try(two_stage(X = X5_train, Z = Z_train, y = y_train, K = 2, method = "svm"))
+
+    pred_svm2_1 <- as.matrix(predict_two_stage(X_new = X1_test, Z_new = Z_test, y_new = y_test, twostage = res_svm2_1, method = "svm", output = "reponse"))
+    pred_svm2_2 <- as.matrix(predict_two_stage(X_new = X2_test, Z_new = Z_test, y_new = y_test, twostage = res_svm2_2, method = "svm", output = "reponse"))
+    pred_svm2_3 <- as.matrix(predict_two_stage(X_new = X3_test, Z_new = Z_test, y_new = y_test, twostage = res_svm2_3, method = "svm", output = "reponse"))
+    pred_svm2_4 <- as.matrix(predict_two_stage(X_new = X4_test, Z_new = Z_test, y_new = y_test, twostage = res_svm2_4, method = "svm", output = "reponse"))
+    pred_svm2_5 <- as.matrix(predict_two_stage(X_new = X5_test, Z_new = Z_test, y_new = y_test, twostage = res_svm2_5, method = "svm", output = "reponse"))
+    pred[i,11,1:5] <- c(pred_svm2_1, pred_svm2_2, pred_svm2_3, pred_svm2_4, pred_svm2_5)
+
+    res_rf1 <- randomForest(x = X1_train, y = as.factor(y_train), ntree = 500)
+    res_rf2 <- randomForest(x = X2_train, y = as.factor(y_train), ntree = 500)
+    res_rf3 <- randomForest(x = X3_train, y = as.factor(y_train), ntree = 500)
+    res_rf4 <- randomForest(x = X4_train, y = as.factor(y_train), ntree = 500)
+    res_rf5 <- randomForest(x = X5_train, y = as.factor(y_train), ntree = 500)
+
+    pred_rf1 <- as.matrix(predict(res_rf1, X1_test, type = "prob")[,"1"])
+    pred_rf2 <- as.matrix(predict(res_rf2, X2_test, type = "prob")[,"1"])
+    pred_rf3 <- as.matrix(predict(res_rf3, X3_test, type = "prob")[,"1"])
+    pred_rf4 <- as.matrix(predict(res_rf4, X4_test, type = "prob")[,"1"])
+    pred_rf5 <- as.matrix(predict(res_rf5, X5_test, type = "prob")[,"1"])
+    pred[i,12,1:5] <- c(pred_rf1, pred_rf2, pred_rf3, pred_rf4, pred_rf5)
+
+    res_rf2_1 <- try(two_stage(X = X1_train, Z = Z_train, y = y_train, K = 2, method = "random forest"))
+    res_rf2_2 <- try(two_stage(X = X2_train, Z = Z_train, y = y_train, K = 2, method = "random forest"))
+    res_rf2_3 <- try(two_stage(X = X3_train, Z = Z_train, y = y_train, K = 2, method = "random forest"))
+    res_rf2_4 <- try(two_stage(X = X4_train, Z = Z_train, y = y_train, K = 2, method = "random forest"))
+    res_rf2_5 <- try(two_stage(X = X5_train, Z = Z_train, y = y_train, K = 2, method = "random forest"))
+    pred_rf2_1 <- as.matrix(predict_two_stage(X_new = X1_test, Z_new = Z_test, y_new = y_test, twostage = res_rf2_1, method = "random forest", output = "reponse"))
+    pred_rf2_2 <- as.matrix(predict_two_stage(X_new = X2_test, Z_new = Z_test, y_new = y_test, twostage = res_rf2_2, method = "random forest", output = "reponse"))
+    pred_rf2_3 <- as.matrix(predict_two_stage(X_new = X3_test, Z_new = Z_test, y_new = y_test, twostage = res_rf2_3, method = "random forest", output = "reponse"))
+    pred_rf2_4 <- as.matrix(predict_two_stage(X_new = X4_test, Z_new = Z_test, y_new = y_test, twostage = res_rf2_4, method = "random forest", output = "reponse"))
+    pred_rf2_5 <- as.matrix(predict_two_stage(X_new = X5_test, Z_new = Z_test, y_new = y_test, twostage = res_rf2_5, method = "random forest", output = "reponse"))
+    pred[i,13,1:5] <- c(pred_rf2_1, pred_rf2_2, pred_rf2_3, pred_rf2_4, pred_rf2_5)
+
+    NEMoE_l <- fitNEMoE(NEMoE_buildFromList(Microbiome = X_train_list, Nutrition = Z_train, Response = y_train,
+                                 lambda1 = c(0.005, 0.012, 0.013, 0.023, 0.025),
+                                 lambda2 = 0.02, alpha1 = 0.5, alpha2 = 0.5,
+                                 cvParams = createCVList(g1 = 10, shrink = 0.4,
+                                                         track = F), itmax = 1e3))
+
+    pred_res_l <- NEMoE_predict(X_new = X_test_list, Z_new = Z_test, NEMoE = NEMoE_l, full = T)$output
+    pred[i,14,1:5] <- c(pred_res_l[1], pred_res_l[2], pred_res_l[3], pred_res_l[4], pred_res_l[4])
+
+    pred_res_l <- NEMoE_predict(X_new = X_test_list, Z_new = Z_test, NEMoE = NEMoE, full = T)$output
+    pred[i,15,1:5] <- c(pred_res_l[1], pred_res_l[2], pred_res_l[3], pred_res_l[4], pred_res_l[4])
+    pred[i,16,1:5] <- rep(y_test,5)
+
+    print(paste0("i(Family):",i, ";", pred[i,,3]))
+    print(paste0("i(Genus):",i, ";", pred[i,,4]))
+
+  }
+
+  return(pred)
+}
 
