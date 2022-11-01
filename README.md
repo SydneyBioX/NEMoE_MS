@@ -14,3 +14,13 @@ Simulation.Rmd generate result for simulation analysis
 ## Real data
 
 Real data.Rmd generate result for in house microbiome PD study.
+
+# Parameter setting
+
+For sparse logistic regression (glmnet package), we use cv.glmnet to select tuning parameters with s="lambda.min"
+
+For support vector machine (e1071 package), we use kernel = "radial" and other parameters set to default.
+
+For random forest (random forest package), we use ntree = 500 and all other parameters set to default.
+
+For NEMoE, we can tune parameters using cvNEMoE function. In this case, to reduce time, we first run cv.glmnet on Microbiome data and Nutrition data seperately, and set the lambda1 and lambda2 fixed close to the "lambda.min" of the glmnet result (lambda1 = 0.04 and lambda2 = 0.02)
